@@ -9,7 +9,7 @@ def read_holding_registers(ip, port=502, unit_id=1, address=0, count=5):
         if not connection:
             return "Connection failed"
 
-        response = client.read_holding_registers(address=address, count=count, unit=unit_id)
+        response = client.read_holding_registers(address=address, count=count, slave=unit_id)
         client.close()
 
         if response.isError():

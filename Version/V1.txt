@@ -1,6 +1,3 @@
-# MyScan v1.0.1 - Custom Build
-# Developed by Mustafa AYDIN for SAVRONIK
-
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QPushButton,
     QComboBox, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
@@ -20,15 +17,16 @@ from core.modbus_tcp import (
 class MyScan(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MyScan - Modbus Scanner | Savronik")
+        self.setWindowTitle("MyScan - Modbus Scanner")
         self.setGeometry(300, 150, 800, 550)
+
         self.timer = QTimer()
         self.timer.timeout.connect(self.read_data)
-        self.client = None  # Bağlantıyı takip etmek için
+
         self.initUI()
-        self.statusBar().showMessage("by Mustafa AYDIN")
 
     def initUI(self):
+        # UI bölümü
         ip_label = QLabel("IP:")
         self.ip_input = QLineEdit("127.0.0.1")
         port_label = QLabel("Port:")
@@ -37,8 +35,7 @@ class MyScan(QMainWindow):
         self.unit_input = QLineEdit("1")
         self.connect_button = QPushButton("Connect")
         self.connect_button.setObjectName("connect_button")
-        self.connect_button.clicked.connect(self.toggle_connection)
-        self.connect_button.setToolTip("Developed by Mustafa AYDIN - Savronik")
+        self.connect_button.clicked.connect(self.connect_to_modbus)
 
         ip_port_layout = QVBoxLayout()
         ip_port_layout.addWidget(ip_label)
@@ -127,6 +124,7 @@ class MyScan(QMainWindow):
         container.setLayout(main_layout)
         self.setCentralWidget(container)
 
+        # STYLING — senin önceki style aynen burada:
         self.setStyleSheet("""
             QMainWindow { background-color: #f0f2f5; }
             QLabel { font-weight: bold; }
@@ -158,16 +156,6 @@ class MyScan(QMainWindow):
             }
         """)
 
-    def toggle_connection(self):
-        if self.client and self.client.connected:
-            self.client.close()
-            self.client = None
-            self.connect_button.setText("Connect")
-            QMessageBox.information(self, "Disconnected", "Connection closed.")
-            self.stop_auto_read()  # Stop timer if disconnect happens
-        else:
-            self.connect_to_modbus()
-
     def connect_to_modbus(self):
         ip = self.ip_input.text()
         port = int(self.port_input.text())
@@ -175,14 +163,15 @@ class MyScan(QMainWindow):
             self.client = ModbusTcpClient(host=ip, port=port)
             if self.client.connect():
                 QMessageBox.information(self, "Connection", f"Connected to {ip}:{port}")
-                self.connect_button.setText("Disconnect")
+                self.connect_button.setEnabled(False)
+                self.connect_button.setText("Connected")
             else:
                 QMessageBox.critical(self, "Connection Failed", f"Could not connect to {ip}:{port}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error: {str(e)}")
 
     def start_auto_read(self):
-        if not self.client or not self.client.connect():
+        if not hasattr(self, 'client') or not self.client.connect():
             QMessageBox.warning(self, "Connection Error", "Modbus connection could not be established.")
             return
         self.read_button.setEnabled(False)
@@ -216,10 +205,14 @@ class MyScan(QMainWindow):
                     self.table.setItem(i, 1, QTableWidgetItem(str(value_str)))
             else:
                 QMessageBox.warning(self, "Read Failed", str(result))
-                self.stop_auto_read()
+                self.timer.stop()
+                self.read_button.setEnabled(True)
+                self.stop_button.setEnabled(False)
         except Exception as e:
             QMessageBox.warning(self, "Error", str(e))
-            self.stop_auto_read()
+            self.timer.stop()
+            self.read_button.setEnabled(True)
+            self.stop_button.setEnabled(False)
 
     def decode_value(self, data, index, datatype):
         try:

@@ -1,4 +1,4 @@
-# MyScan v1.0.1 - Custom Build
+# MyScan v1.0.2 - Custom Build
 # Developed by Mustafa AYDIN for SAVRONIK
 
 from PyQt5.QtWidgets import (
@@ -9,7 +9,9 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import QTimer
 from pymodbus.client import ModbusTcpClient
 import sys
+import math
 import struct
+from core.ip_history import load_ip_history, save_ip_history
 from core.modbus_tcp import (
     read_registers_by_type,
     write_single_register,
@@ -24,13 +26,16 @@ class MyScan(QMainWindow):
         self.setGeometry(300, 150, 800, 550)
         self.timer = QTimer()
         self.timer.timeout.connect(self.read_data)
-        self.client = None  # Bağlantıyı takip etmek için
+        self.client = None
         self.initUI()
         self.statusBar().showMessage("by Mustafa AYDIN")
 
     def initUI(self):
         ip_label = QLabel("IP:")
-        self.ip_input = QLineEdit("127.0.0.1")
+        self.ip_combo = QComboBox()
+        self.ip_combo.setEditable(True)
+        self.ip_combo.addItems(load_ip_history())
+        self.ip_combo.setCurrentText("127.0.0.1")
         port_label = QLabel("Port:")
         self.port_input = QLineEdit("502")
         unit_label = QLabel("Unit ID:")
@@ -42,7 +47,7 @@ class MyScan(QMainWindow):
 
         ip_port_layout = QVBoxLayout()
         ip_port_layout.addWidget(ip_label)
-        ip_port_layout.addWidget(self.ip_input)
+        ip_port_layout.addWidget(self.ip_combo)
         ip_port_layout.addWidget(port_label)
         ip_port_layout.addWidget(self.port_input)
         ip_port_layout.addWidget(unit_label)
@@ -94,9 +99,7 @@ class MyScan(QMainWindow):
         button_layout.addWidget(self.stop_button)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(2)
-        self.table.setHorizontalHeaderLabels(["Address", "Value"])
-
+       
         self.write_label = QLabel("Write Address:")
         self.write_address = QLineEdit()
         self.value_label = QLabel("Write Value(s):")
@@ -164,12 +167,13 @@ class MyScan(QMainWindow):
             self.client = None
             self.connect_button.setText("Connect")
             QMessageBox.information(self, "Disconnected", "Connection closed.")
-            self.stop_auto_read()  # Stop timer if disconnect happens
+            self.stop_auto_read()
         else:
             self.connect_to_modbus()
 
     def connect_to_modbus(self):
-        ip = self.ip_input.text()
+        ip = self.ip_combo.currentText()
+        save_ip_history(ip)
         port = int(self.port_input.text())
         try:
             self.client = ModbusTcpClient(host=ip, port=port)
@@ -194,26 +198,67 @@ class MyScan(QMainWindow):
             self.timer.stop()
         self.read_button.setEnabled(True)
         self.stop_button.setEnabled(False)
-
     def read_data(self):
         try:
-            ip = self.ip_input.text()
+            ip = self.ip_combo.currentText()
             port = int(self.port_input.text())
             unit_id = int(self.unit_input.text())
             address = int(self.address_input.text())
             count = int(self.count_input.text())
             datatype = self.datatype_combo.currentText()
             register_type = self.regtype_combo.currentText()
-
+    
             result = read_registers_by_type(ip, port, unit_id, address, count, register_type)
             self.table.setRowCount(0)
-
+    
+            # Register tipi bazlı Modbus offset başlangıcı
+            if register_type == "Holding":
+                base_offset = 40001
+            elif register_type == "Input":
+                base_offset = 30001
+            elif register_type == "Coil":
+                base_offset = 1
+            elif register_type == "Discrete":
+                base_offset = 10001
+            else:
+                base_offset = 0
+    
             if isinstance(result, list):
-                for i, val in enumerate(result):
-                    value_str = self.decode_value(result, i, datatype)
-                    self.table.insertRow(i)
-                    self.table.setItem(i, 0, QTableWidgetItem(str(address + i)))
-                    self.table.setItem(i, 1, QTableWidgetItem(str(value_str)))
+                # --- BINARY GÖRÜNÜM ---
+                if datatype == "Binary":
+                    self.table.setColumnCount(17)
+                    headers = ["Address"] + [f"Bit {15 - i}" for i in range(16)]
+                    self.table.setHorizontalHeaderLabels(headers)
+                    self.table.setRowCount(len(result))
+    
+                    for row, val in enumerate(result):
+                        modbus_address = base_offset + address + row
+                        self.table.setItem(row, 0, QTableWidgetItem(str(modbus_address)))
+                        bit_str = format(val, '016b')
+                        for col, bit in enumerate(bit_str):
+                            self.table.setItem(row, col + 1, QTableWidgetItem(bit))
+                else:
+                    # --- STANDART VERİ TİPLERİ ---
+                    pair_per_row = 3
+                    row_count = math.ceil(len(result) / pair_per_row)
+                    self.table.setColumnCount(pair_per_row * 2)
+                    self.table.setRowCount(row_count)
+    
+                    headers = []
+                    for i in range(pair_per_row):
+                        headers.append(f"Address {i+1}")
+                        headers.append(f"Value {i+1}")
+                    self.table.setHorizontalHeaderLabels(headers)
+    
+                    for idx, val in enumerate(result):
+                        row = idx // pair_per_row
+                        col = (idx % pair_per_row) * 2
+    
+                        modbus_address = base_offset + address + idx
+                        value_str = self.decode_value(result, idx, datatype)
+    
+                        self.table.setItem(row, col, QTableWidgetItem(str(modbus_address)))
+                        self.table.setItem(row, col + 1, QTableWidgetItem(str(value_str)))
             else:
                 QMessageBox.warning(self, "Read Failed", str(result))
                 self.stop_auto_read()
@@ -245,7 +290,7 @@ class MyScan(QMainWindow):
             return f"ERR ({str(e)})"
 
     def write_data(self):
-        ip = self.ip_input.text()
+        ip = self.ip_combo.currentText()
         port = int(self.port_input.text())
         unit_id = int(self.unit_input.text())
         address = int(self.write_address.text())
@@ -289,7 +334,6 @@ class MyScan(QMainWindow):
             QMessageBox.information(self, "Success", f"Write successful.")
         else:
             QMessageBox.warning(self, "Write Error", f"Write failed: {result}")
-
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

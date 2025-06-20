@@ -1,5 +1,5 @@
 # MyScan v1.0.2 - Custom Build
-# Developed by Mustafa AYDIN for SAVRONIK
+# Developed by Mustafa AYDIN
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QPushButton,

@@ -1,16 +1,24 @@
+<<<<<<< HEAD
 # MyScan v1.0.2 - Custom Build
+=======
+# MyScan v1.0.2 - Custom Build with Chart Integration
+>>>>>>> a6e785f (MyScan with Chart V0.0)
 # Developed by Mustafa AYDIN
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QPushButton,
     QComboBox, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QMessageBox
+    QMessageBox,QSpinBox
 )
 from PyQt5.QtCore import QTimer
 from pymodbus.client import ModbusTcpClient
 import sys
 import math
 import struct
+from collections import deque
+import pyqtgraph as pg
+
+# Core modules
 from core.ip_history import load_ip_history, save_ip_history
 from core.modbus_tcp import (
     read_registers_by_type,
@@ -18,6 +26,7 @@ from core.modbus_tcp import (
     write_single_coil,
     write_multiple_registers
 )
+from core.chart_window import ChartWindow  # ✅ Grafik penceresi
 
 class MyScan(QMainWindow):
     def __init__(self):
@@ -27,6 +36,7 @@ class MyScan(QMainWindow):
         self.timer = QTimer()
         self.timer.timeout.connect(self.read_data)
         self.client = None
+        self.chart_window = ChartWindow()  # ✅ Grafik penceresi örneği
         self.initUI()
         self.statusBar().showMessage("by Mustafa AYDIN")
 
@@ -40,10 +50,10 @@ class MyScan(QMainWindow):
         self.port_input = QLineEdit("502")
         unit_label = QLabel("Unit ID:")
         self.unit_input = QLineEdit("1")
+
         self.connect_button = QPushButton("Connect")
         self.connect_button.setObjectName("connect_button")
         self.connect_button.clicked.connect(self.toggle_connection)
-        self.connect_button.setToolTip("Developed by Mustafa AYDIN - Savronik")
 
         ip_port_layout = QVBoxLayout()
         ip_port_layout.addWidget(ip_label)
@@ -94,12 +104,25 @@ class MyScan(QMainWindow):
         self.stop_button.setObjectName("stop_button")
         self.stop_button.clicked.connect(self.stop_auto_read)
 
+        self.chart_button = QPushButton("📈 Open Chart")
+        self.chart_button.setStyleSheet("padding: 8px; font-weight: bold; background-color: #7f8c8d; color: white; border-radius: 5px;")
+        self.chart_button.clicked.connect(self.open_chart_window)
+        
+        self.chart_target_address = QSpinBox()
+        self.chart_target_address.setMinimum(0)
+        self.chart_target_address.setMaximum(65535)
+        self.chart_target_address.setValue(0)
+
         button_layout = QHBoxLayout()
+        
         button_layout.addWidget(self.read_button)
         button_layout.addWidget(self.stop_button)
-
+        button_layout.addWidget(self.chart_button)
+        button_layout.addWidget(QLabel("Target Addr:"))
+        button_layout.addWidget(self.chart_target_address)
+    
         self.table = QTableWidget()
-       
+
         self.write_label = QLabel("Write Address:")
         self.write_address = QLineEdit()
         self.value_label = QLabel("Write Value(s):")
@@ -130,6 +153,7 @@ class MyScan(QMainWindow):
         container.setLayout(main_layout)
         self.setCentralWidget(container)
 
+        # ✅ Stil
         self.setStyleSheet("""
             QMainWindow { background-color: #f0f2f5; }
             QLabel { font-weight: bold; }
@@ -198,6 +222,7 @@ class MyScan(QMainWindow):
             self.timer.stop()
         self.read_button.setEnabled(True)
         self.stop_button.setEnabled(False)
+
     def read_data(self):
         try:
             ip = self.ip_combo.currentText()
@@ -207,11 +232,10 @@ class MyScan(QMainWindow):
             count = int(self.count_input.text())
             datatype = self.datatype_combo.currentText()
             register_type = self.regtype_combo.currentText()
-    
+
             result = read_registers_by_type(ip, port, unit_id, address, count, register_type)
             self.table.setRowCount(0)
-    
-            # Register tipi bazlı Modbus offset başlangıcı
+
             if register_type == "Holding":
                 base_offset = 40001
             elif register_type == "Input":
@@ -222,46 +246,67 @@ class MyScan(QMainWindow):
                 base_offset = 10001
             else:
                 base_offset = 0
-    
+
             if isinstance(result, list):
-                # --- BINARY GÖRÜNÜM ---
                 if datatype == "Binary":
                     self.table.setColumnCount(17)
                     headers = ["Address"] + [f"Bit {15 - i}" for i in range(16)]
                     self.table.setHorizontalHeaderLabels(headers)
                     self.table.setRowCount(len(result))
-    
+
                     for row, val in enumerate(result):
                         modbus_address = base_offset + address + row
                         self.table.setItem(row, 0, QTableWidgetItem(str(modbus_address)))
                         bit_str = format(val, '016b')
                         for col, bit in enumerate(bit_str):
                             self.table.setItem(row, col + 1, QTableWidgetItem(bit))
+
                 else:
-                    # --- STANDART VERİ TİPLERİ ---
-                    pair_per_row = 3
+                    width = self.width()
+                    if width < 900:
+                        pair_per_row = 3
+                    elif 901 < width < 1200:
+                        pair_per_row = 6
+                    elif 1201 < width < 1600:
+                        pair_per_row = 9
+                    else:
+                        pair_per_row = 11
+
                     row_count = math.ceil(len(result) / pair_per_row)
                     self.table.setColumnCount(pair_per_row * 2)
                     self.table.setRowCount(row_count)
-    
+
                     headers = []
                     for i in range(pair_per_row):
                         headers.append(f"Address {i+1}")
                         headers.append(f"Value {i+1}")
                     self.table.setHorizontalHeaderLabels(headers)
-    
+
                     for idx, val in enumerate(result):
                         row = idx // pair_per_row
                         col = (idx % pair_per_row) * 2
-    
+
                         modbus_address = base_offset + address + idx
                         value_str = self.decode_value(result, idx, datatype)
-    
+
                         self.table.setItem(row, col, QTableWidgetItem(str(modbus_address)))
                         self.table.setItem(row, col + 1, QTableWidgetItem(str(value_str)))
+
+                  
+                    # --- read_data içindeki grafik gönderimi kısmı güncellendi ---
+                    if datatype in ["Int", "UInt", "Float"] and result and isinstance(result[0], (int, float)):
+                        selected_addr = self.chart_target_address.value()
+                        relative_index = selected_addr - address
+                        if 0 <= relative_index < len(result):
+                            self.chart_window.update_chart(result[relative_index])
+
+
+                    self.table.resizeColumnsToContents()
+
             else:
                 QMessageBox.warning(self, "Read Failed", str(result))
                 self.stop_auto_read()
+
         except Exception as e:
             QMessageBox.warning(self, "Error", str(e))
             self.stop_auto_read()
@@ -334,6 +379,13 @@ class MyScan(QMainWindow):
             QMessageBox.information(self, "Success", f"Write successful.")
         else:
             QMessageBox.warning(self, "Write Error", f"Write failed: {result}")
+    # --- open_chart_window fonksiyonu güncellendi ---
+    def open_chart_window(self):
+        if self.chart_window is None:
+            self.chart_window = ChartWindow()
+        selected_address = self.chart_target_address.value()
+        self.chart_window.set_target_address(selected_address)
+        self.chart_window.show()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
